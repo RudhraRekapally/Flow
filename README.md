@@ -2,6 +2,8 @@
 
 **Flow** is a full-screen carousel of your wallpapers. Pick one and it becomes the desktop background.
 
+**Download:** get the installer from the [Releases page](../../releases/latest) (under **Assets**). The green **Code > Download ZIP** button gives the source code only.
+
 Put `.jpg`, `.jpeg` or `.png` files in **Pictures/Wallpapers** and open Flow.
 
 | Key | Action |
