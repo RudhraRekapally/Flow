@@ -76,8 +76,12 @@ jobs:
           file dist/Flow.app/Contents/MacOS/Flow
           qtcore="$(find dist/Flow.app -path '*QtCore.framework/Versions/A/QtCore' -type f | head -1)"
           echo "QtCore: $qtcore"
-          lipo -archs "$qtcore"
-          otool -l "$qtcore" | grep -A4 LC_BUILD_VERSION | grep minos
+          archs="$(lipo -archs "$qtcore")"
+          minos="$(otool -l "$qtcore" | grep -A4 LC_BUILD_VERSION | awk '/minos/ {print $2; exit}')"
+          line="- **${{ matrix.label }}** (\`Flow-macOS-${{ matrix.label }}.dmg\`): macOS $minos or newer, $archs"
+          echo "$line"
+          echo "$line" >> "$GITHUB_STEP_SUMMARY"
+          echo "$line" > "macos-${{ matrix.label }}.md"
 
       - name: Smoke test (app starts and stays up)
         run: |
@@ -103,6 +107,11 @@ jobs:
           name: Flow-macOS-${{ matrix.label }}
           path: Flow-macOS-${{ matrix.label }}.dmg
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notes-macos-${{ matrix.label }}
+          path: macos-${{ matrix.label }}.md
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [windows, macos]
@@ -110,9 +119,29 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: Flow-*
           path: out
           merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: notes-*
+          path: notes
+          merge-multiple: true
+
+      - name: Write release notes
+        run: |
+          {
+            echo "## Downloads"
+            echo
+            echo "- **Windows 10 / 11**: \`FlowSetup.exe\`"
+            cat notes/*.md
+            echo
+            echo "Not sure which Mac you have? Apple menu > About This Mac shows the chip."
+            echo "Install steps for each system are in the README."
+          } > body.md
 
       - uses: softprops/action-gh-release@v2
         with:
           files: out/*
+          body_path: body.md
