@@ -1,1 +1,2 @@
-PySide6-Essentials>=6.5
+# Qt 6.8 LTS: the newest line that still runs on macOS 12. Newer Qt needs macOS 14.4.
+PySide6-Essentials~=6.8.0

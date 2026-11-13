@@ -12,9 +12,10 @@ $venvPy = Join-Path $root '.build-venv\Scripts\python.exe'
 if (-not (Test-Path $venvPy)) {
     python -m venv (Join-Path $root '.build-venv')
     if ($LASTEXITCODE -ne 0) { throw 'could not create the build environment' }
-    & $venvPy -m pip install --disable-pip-version-check PySide6-Essentials pyinstaller
-    if ($LASTEXITCODE -ne 0) { throw 'pip install failed' }
 }
+# Every run, so a local build uses the same pinned Qt as the GitHub builds.
+& $venvPy -m pip install --disable-pip-version-check -r (Join-Path $root 'requirements.txt') pyinstaller
+if ($LASTEXITCODE -ne 0) { throw 'pip install failed' }
 
 & $venvPy (Join-Path $root 'tools\make_icon.py') (Join-Path $root 'assets\icon.ico')
 

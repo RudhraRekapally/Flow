@@ -23,7 +23,8 @@ time: choose **More info**, then **Run anyway**.
 
 ## macOS
 
-Pick the download for your Mac (Apple menu > **About This Mac** shows the chip):
+Needs **macOS 12 Monterey or newer**. Pick the download for your Mac (Apple menu >
+**About This Mac** shows the chip):
 
 - `Flow-macOS-AppleSilicon.dmg` for an Apple M1, M2, M3, M4 or newer chip
 - `Flow-macOS-Intel.dmg` for an Intel processor

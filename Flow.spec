@@ -68,7 +68,9 @@ if sys.platform == "darwin":
         bundle_identifier="app.flow.wallpapers",
         icon="assets/icon.ico",  # converted to .icns by PyInstaller; needs Pillow installed
         info_plist={
-            "CFBundleShortVersionString": "1.1.0",
+            "CFBundleShortVersionString": "1.1.1",
+            # Matches Qt 6.8, pinned in requirements.txt; older Macs get a clear message instead of a crash.
+            "LSMinimumSystemVersion": "12.0",
             "NSHighResolutionCapable": True,
             # Setting the wallpaper goes through System Events. Without this line macOS
             # refuses the request silently instead of asking the user for permission.
