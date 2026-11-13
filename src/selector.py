@@ -19,7 +19,7 @@ from PySide6.QtGui import QCursor, QGuiApplication, QImageReader
 from PySide6.QtQml import QQmlApplicationEngine
 
 APP_NAME = "Flow"
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 # The name before Flow. Settings saved under it are carried over on first run.
 LEGACY_NAME = "WallpaperSelector"
 

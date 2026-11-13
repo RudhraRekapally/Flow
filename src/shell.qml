@@ -12,6 +12,8 @@ Window {
     property int animDuration: 1000
     property real zoomScale: 0.8
     property real edgeScale: 0.3
+    // A lean, as in the original. Applied as a matrix because QtQuick's Shear type
+    // only exists in Qt 6.9 and newer, and Flow is built against the 6.8 LTS line.
     property real skewFactor: 0
     property real baseSpacing: 0
     property real edgeSpacing: 80
@@ -351,7 +353,10 @@ Window {
                     opacity: main.shadowOpacity
                     layer.enabled: true
                     layer.effect: MultiEffect { brightness: -1; blurEnabled: true; blur: main.shadowBlur }
-                    transform: Shear { xFactor: main.skewFactor }
+                    transform: Matrix4x4 { matrix: Qt.matrix4x4(1, main.skewFactor, 0, 0,
+                                                                   0, 1, 0, 0,
+                                                                   0, 0, 1, 0,
+                                                                   0, 0, 0, 1) }
                 }
 
                 Text {
@@ -360,7 +365,10 @@ Window {
                     color: backend.borderColor
                     anchors.centerIn: parent
                     font.pixelSize: 16 * main.ui
-                    transform: Shear { xFactor: main.skewFactor }
+                    transform: Matrix4x4 { matrix: Qt.matrix4x4(1, main.skewFactor, 0, 0,
+                                                                   0, 1, 0, 0,
+                                                                   0, 0, 1, 0,
+                                                                   0, 0, 0, 1) }
                 }
 
                 Image {
@@ -374,7 +382,10 @@ Window {
                     source: delegateItem.thumbUrl
                     sourceSize.width: delegateItem.baseWidth * main.zoomScale
                     sourceSize.height: delegateItem.height
-                    transform: Shear { xFactor: main.skewFactor }
+                    transform: Matrix4x4 { matrix: Qt.matrix4x4(1, main.skewFactor, 0, 0,
+                                                                   0, 1, 0, 0,
+                                                                   0, 0, 1, 0,
+                                                                   0, 0, 0, 1) }
 
                     Timer {
                         id: retryTimer
@@ -395,7 +406,10 @@ Window {
                     color: "transparent"
                     border.width: Math.max(1, Math.round(2 * main.ui))
                     border.color: backend.borderColor
-                    transform: Shear { xFactor: main.skewFactor }
+                    transform: Matrix4x4 { matrix: Qt.matrix4x4(1, main.skewFactor, 0, 0,
+                                                                   0, 1, 0, 0,
+                                                                   0, 0, 1, 0,
+                                                                   0, 0, 0, 1) }
                 }
             }
 
