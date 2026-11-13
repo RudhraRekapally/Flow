@@ -1,0 +1,23 @@
+Flow - third-party notices
+==========================
+
+Carousel design and QML
+-----------------------
+The picker's carousel is a Windows port of "hyprquickpaper" by iamsurjog
+(https://github.com/iamsurjog/hyprquickpaper), in the form modified and published
+by 43PR in https://github.com/43PR/dotfiles under the MIT License.
+The MIT license text is in licenses\43PR-dotfiles-MIT.txt.
+
+Qt and PySide6
+--------------
+This program uses Qt 6 and PySide6 (Qt for Python), copyright The Qt Company Ltd.
+and other contributors, under the GNU Lesser General Public License version 3.
+  License text: licenses\LGPL-3.0.txt (which builds on licenses\GPL-3.0.txt)
+  Source code:  https://download.qt.io/official_releases/QtForPython/pyside6/
+The Qt libraries are installed as separate files in the application's _internal
+folder and may be replaced with your own builds of the same version.
+
+Python
+------
+This program bundles the CPython runtime, copyright Python Software Foundation,
+under the PSF License Agreement (https://docs.python.org/3/license.html).
