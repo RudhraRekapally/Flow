@@ -4,6 +4,9 @@ A port of the hyprquickpaper carousel (https://github.com/iamsurjog/hyprquickpap
 as tweaked in https://github.com/43PR/dotfiles). The Quickshell / Hyprland parts are
 replaced with a plain Qt Quick window, thumbnails are made with Qt instead of
 ImageMagick, and the wallpaper is set through each desktop's own interface.
+
+Copyright (c) 2026 Rudhra Rekapally. All rights reserved.
+Proprietary; see LICENSE. Third-party terms: THIRD-PARTY-NOTICES.txt.
 """
 
 import json

@@ -99,6 +99,9 @@ jobs:
         run: |
           mkdir dmg
           cp -R dist/Flow.app dmg/
+          cp LICENSE dmg/LICENSE.txt
+          cp THIRD-PARTY-NOTICES.txt dmg/
+          cp -R licenses dmg/licenses
           ln -s /Applications dmg/Applications
           hdiutil create -volname Flow -srcfolder dmg -ov -format UDZO "Flow-macOS-${{ matrix.label }}.dmg"
 

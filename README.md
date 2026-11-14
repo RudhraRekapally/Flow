@@ -94,6 +94,14 @@ python3 -m venv .build-venv
 .build-venv/bin/pyinstaller --noconfirm Flow.spec
 ```
 
+## License
+
+Flow is proprietary software, not open source: free to install and use, but not to
+redistribute, resell or reuse the code in another project. See [LICENSE](LICENSE).
+
+The third-party parts it is built on keep their own, more permissive terms — the MIT
+carousel it was ported from, and Qt under the LGPL. See `THIRD-PARTY-NOTICES.txt`.
+
 ## Credits
 
 The carousel is a port of [hyprquickpaper](https://github.com/iamsurjog/hyprquickpaper) by

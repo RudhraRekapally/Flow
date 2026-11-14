@@ -9,6 +9,8 @@
 AppId={{87B27686-CB12-4D2A-9A82-F8C353289869}
 AppName={#AppName}
 AppVersion={#AppVersion}
+AppCopyright=Copyright (c) 2026 Rudhra Rekapally. All rights reserved.
+LicenseFile=..\LICENSE
 DefaultDirName={autopf}\Flow
 PrivilegesRequired=lowest
 DisableProgramGroupPage=yes
@@ -31,6 +33,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 
 [Files]
 Source: "..\dist\Flow\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 Source: "..\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion
 

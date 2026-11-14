@@ -1,3 +1,7 @@
+// Flow - the wallpaper carousel.
+// Copyright (c) 2026 Rudhra Rekapally. All rights reserved.
+// Proprietary; see LICENSE. Ported from hyprquickpaper (MIT) - see THIRD-PARTY-NOTICES.txt.
+
 import QtQuick
 import QtQuick.Window
 import QtQuick.Effects

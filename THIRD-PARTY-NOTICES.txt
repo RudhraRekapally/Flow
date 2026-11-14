@@ -1,5 +1,7 @@
 Flow - third-party notices
 ==========================
+Flow itself is proprietary: see LICENSE. The components below are other
+people's work and keep their own terms, which LICENSE does not restrict.
 
 Carousel design and QML
 -----------------------
