@@ -68,7 +68,7 @@ if sys.platform == "darwin":
         bundle_identifier="app.flow.wallpapers",
         icon="assets/icon.ico",  # converted to .icns by PyInstaller; needs Pillow installed
         info_plist={
-            "CFBundleShortVersionString": "1.1.2",
+            "CFBundleShortVersionString": "1.2.0",
             # Matches Qt 6.8, pinned in requirements.txt; older Macs get a clear message instead of a crash.
             "LSMinimumSystemVersion": "12.0",
             "NSHighResolutionCapable": True,

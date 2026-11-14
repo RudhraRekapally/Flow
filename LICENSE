@@ -50,11 +50,6 @@ Flow is built on other people's work, and the rest of this license does not
 restrict it. Those components keep their own licenses, which override every
 restriction above for the parts they cover:
 
-  - The carousel interface is a port of "hyprquickpaper" by iamsurjog, in the
-    form published in 43PR/dotfiles under the MIT License. The MIT License
-    permits reuse of that original work, and nothing in this license takes that
-    permission away. See licenses/43PR-dotfiles-MIT.txt.
-
   - Qt 6 and PySide6 are licensed under the GNU Lesser General Public License
     version 3. As the LGPL requires, Flow ships the Qt libraries as separate
     files you may replace with your own builds of the same version, and the
@@ -64,6 +59,10 @@ restriction above for the parts they cover:
   - The bundled CPython runtime is licensed under the PSF License Agreement.
 
 Full details are in THIRD-PARTY-NOTICES.txt.
+
+Flow's carousel was inspired by "hyprquickpaper" by iamsurjog
+(https://github.com/iamsurjog/hyprquickpaper). Flow contains none of its code;
+the credit is for the idea.
 
 
 6. Termination

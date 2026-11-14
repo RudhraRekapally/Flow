@@ -3,13 +3,6 @@ Flow - third-party notices
 Flow itself is proprietary: see LICENSE. The components below are other
 people's work and keep their own terms, which LICENSE does not restrict.
 
-Carousel design and QML
------------------------
-The picker's carousel is a Windows port of "hyprquickpaper" by iamsurjog
-(https://github.com/iamsurjog/hyprquickpaper), in the form modified and published
-by 43PR in https://github.com/43PR/dotfiles under the MIT License.
-The MIT license text is in licenses\43PR-dotfiles-MIT.txt.
-
 Qt and PySide6
 --------------
 This program uses Qt 6 and PySide6 (Qt for Python), copyright The Qt Company Ltd.
@@ -23,3 +16,9 @@ Python
 ------
 This program bundles the CPython runtime, copyright Python Software Foundation,
 under the PSF License Agreement (https://docs.python.org/3/license.html).
+
+Inspiration
+-----------
+The carousel was inspired by "hyprquickpaper" by iamsurjog
+(https://github.com/iamsurjog/hyprquickpaper). Flow is written from scratch and
+contains none of its code.

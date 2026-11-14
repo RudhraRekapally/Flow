@@ -1,9 +1,9 @@
 """Flow: a full-screen carousel that sets the desktop wallpaper.
 
-A port of the hyprquickpaper carousel (https://github.com/iamsurjog/hyprquickpaper,
-as tweaked in https://github.com/43PR/dotfiles). The Quickshell / Hyprland parts are
-replaced with a plain Qt Quick window, thumbnails are made with Qt instead of
-ImageMagick, and the wallpaper is set through each desktop's own interface.
+Inspired by iamsurjog's hyprquickpaper, which is where the idea of picking a
+wallpaper from a row of cards came from. Flow is written from scratch: a plain
+Qt Quick window, Qt for the thumbnails, and each desktop's own interface for
+setting the picture.
 
 Copyright (c) 2026 Rudhra Rekapally. All rights reserved.
 Proprietary; see LICENSE. Third-party terms: THIRD-PARTY-NOTICES.txt.
@@ -17,12 +17,12 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from PySide6.QtCore import Property, QObject, QSize, QStandardPaths, Qt, QUrl, Slot
+from PySide6.QtCore import Property, QObject, QSize, QStandardPaths, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QCursor, QGuiApplication, QImageReader
 from PySide6.QtQml import QQmlApplicationEngine
 
 APP_NAME = "Flow"
-VERSION = "1.1.2"
+VERSION = "1.2.0"
 # The name before Flow. Settings saved under it are carried over on first run.
 LEGACY_NAME = "WallpaperSelector"
 
@@ -36,14 +36,33 @@ EXTENSIONS = {".png", ".jpg", ".jpeg"}
 THUMB_HEIGHT = 500
 
 DEFAULTS = {
-    "wallpaper_path": "$PICTURES/Wallpapers/",
-    "cache_path": "$CACHE/thumbs/",
-    "number_of_pictures": 10,
-    "border_color": "transparent",
-    "cache_batch_size": 20,
+    "folder": "$PICTURES/Wallpapers/",
+    "thumbnails": "$CACHE/thumbs/",
+    "tiles": 10,
+    "highlight": "transparent",
+    "workers": 20,
     "show_hints": True,
     "transition": True,
 }
+
+# Settings written by Flow 1.1 and earlier, which used other names for these.
+RENAMED = {
+    "wallpaper_path": "folder",
+    "cache_path": "thumbnails",
+    "number_of_pictures": "tiles",
+    "border_color": "highlight",
+    "cache_batch_size": "workers",
+}
+
+
+def rename_keys(saved):
+    """Return saved settings under the current names, dropping anything unknown."""
+    out = {}
+    for key, value in saved.items():
+        key = RENAMED.get(key, key)
+        if key in DEFAULTS:
+            out[key] = value
+    return out
 
 
 def config_dir(name=APP_NAME):
@@ -71,9 +90,18 @@ def legacy_settings():
         return {}
     if not isinstance(saved, dict):
         return {}
+    saved = rename_keys(saved)
     # The thumbnail cache is disposable; let it start fresh under the new name.
-    saved.pop("cache_path", None)
+    saved.pop("thumbnails", None)
     return saved
+
+
+def save_config(path, config):
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(config, indent=4) + "\n", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def load_config():
@@ -81,15 +109,15 @@ def load_config():
     config = dict(DEFAULTS)
     try:
         with open(path, encoding="utf-8") as f:
-            config.update(json.load(f))
+            saved = json.load(f)
+        config.update(rename_keys(saved))
+        if set(saved) & set(RENAMED):
+            # Rewrite it once, so the file on disk matches the documented names.
+            save_config(path, config)
     except FileNotFoundError:
         saved = legacy_settings()
         config.update(saved)
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({**DEFAULTS, **saved}, indent=4) + "\n", encoding="utf-8")
-        except OSError:
-            pass
+        save_config(path, config)
     except (OSError, ValueError):
         # A config that cannot be read or parsed must not stop the picker from opening.
         pass
@@ -105,7 +133,7 @@ def expand(path):
 
 
 def wallpaper_dir(config):
-    folder = expand(config["wallpaper_path"])
+    folder = expand(config["folder"])
     try:
         folder.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -113,7 +141,7 @@ def wallpaper_dir(config):
     return folder
 
 
-def make_thumbnail(src, out):
+def make_thumbnail(src, out, announce=None):
     stamp = src.stat()
     reader = QImageReader(str(src))
     reader.setAutoTransform(True)
@@ -131,6 +159,9 @@ def make_thumbnail(src, out):
         # The thumbnail carries its source's timestamp; a mismatch later means the image was replaced.
         os.utime(part, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
         os.replace(part, out)
+        if announce is not None:
+            # Crosses back to the GUI thread as a queued signal.
+            announce(out.name)
 
 
 def is_stale(src, thumb):
@@ -140,7 +171,7 @@ def is_stale(src, thumb):
         return True
 
 
-def cache_thumbnails(source_dir, thumb_dir, batch_size):
+def cache_thumbnails(source_dir, thumb_dir, batch_size, announce=None):
     try:
         thumb_dir.mkdir(parents=True, exist_ok=True)
         sources = sorted(
@@ -154,7 +185,7 @@ def cache_thumbnails(source_dir, thumb_dir, batch_size):
     workers = max(1, min(batch_size or 1, os.cpu_count() or 1))
     pool = ThreadPoolExecutor(max_workers=workers)
     for src, out in stale:
-        pool.submit(make_thumbnail, src, out)
+        pool.submit(make_thumbnail, src, out, announce)
     return pool
 
 
@@ -231,34 +262,37 @@ def open_folder(folder):
 
 
 class Backend(QObject):
+    # A thumbnail has just been written; the card showing that file can load it.
+    thumbnailReady = Signal(str)
+
     def __init__(self, config):
         super().__init__()
         self.wallpaper_dir = wallpaper_dir(config)
-        self.cache_dir = expand(config["cache_path"])
-        self._pictures = int(config["number_of_pictures"])
-        self._border = str(config["border_color"])
+        self.cache_dir = expand(config["thumbnails"])
+        self._tiles = int(config["tiles"])
+        self._highlight = str(config["highlight"])
         self._hints = bool(config["show_hints"])
         self._transition = bool(config["transition"])
 
     @Property(QUrl, constant=True)
-    def wallpaperUrl(self):
+    def folderUrl(self):
         return QUrl.fromLocalFile(str(self.wallpaper_dir))
 
     @Property(str, constant=True)
-    def wallpaperPath(self):
+    def folderPath(self):
         return str(self.wallpaper_dir)
 
     @Property(str, constant=True)
-    def cacheUrl(self):
+    def thumbsUrl(self):
         return QUrl.fromLocalFile(str(self.cache_dir) + os.sep).toString()
 
     @Property(int, constant=True)
-    def numberOfPictures(self):
-        return self._pictures
+    def tiles(self):
+        return self._tiles
 
     @Property(str, constant=True)
-    def borderColor(self):
-        return self._border
+    def highlight(self):
+        return self._highlight
 
     @Property(bool, constant=True)
     def showHints(self):
@@ -283,7 +317,9 @@ def build(app):
     """Create the picker window on the screen under the cursor. Returns what must stay alive."""
     config = load_config()
     backend = Backend(config)
-    pool = cache_thumbnails(backend.wallpaper_dir, backend.cache_dir, int(config["cache_batch_size"]))
+    pool = cache_thumbnails(
+        backend.wallpaper_dir, backend.cache_dir, int(config["workers"]), backend.thumbnailReady.emit
+    )
 
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("backend", backend)

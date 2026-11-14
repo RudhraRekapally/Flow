@@ -1,6 +1,17 @@
 // Flow - the wallpaper carousel.
 // Copyright (c) 2026 Rudhra Rekapally. All rights reserved.
-// Proprietary; see LICENSE. Ported from hyprquickpaper (MIT) - see THIRD-PARTY-NOTICES.txt.
+// Proprietary; see LICENSE.
+//
+// The row is laid out by hand rather than by one of Qt's views, because every view
+// that scrolls a strip of items treats it as a loop, and this one has two ends: the
+// first wallpaper and the last.
+//
+// There is a single number behind it, `cursor`, which says which card is in the
+// middle. It is a real number, not an integer, so animating it slides the whole row.
+// Each card then reads its own distance from the cursor and looks up where it sits
+// and how big it is, interpolating between the entries of a small table. The table
+// is the shape of the row: the selected card is the biggest, and the rest shrink and
+// bunch up towards the edges of the screen.
 
 import QtQuick
 import QtQuick.Window
@@ -8,440 +19,540 @@ import QtQuick.Effects
 import Qt.labs.folderlistmodel
 
 Window {
-    id: main
-    readonly property real ui: Screen.height / 1080
-    readonly property real refWidth: 1920
-    readonly property real refHeight: 500
-    property int speed: 5000
-    property int animDuration: 1000
-    property real zoomScale: 0.8
-    property real edgeScale: 0.3
-    // A lean, as in the original. Applied as a matrix because QtQuick's Shear type
-    // only exists in Qt 6.9 and newer, and Flow is built against the 6.8 LTS line.
-    property real skewFactor: 0
-    property real baseSpacing: 0
-    property real edgeSpacing: 80
-    property int startPosition: 4
-    property bool shadowEnabled: true
-    property color shadowColor: "#000000"
-    property real shadowOpacity: 0.4
-    property real shadowBlur: 0.45
-    property real shadowX: 6
-    property real shadowY: 6
+    id: root
 
-    property bool showEmpty: false
-    readonly property bool looksEmpty: folderModel.status === FolderListModel.Ready
-                                       && folderModel.count === 0
-
-    onLooksEmptyChanged: {
-        if (looksEmpty) {
-            emptyDelay.restart()
-        } else {
-            emptyDelay.stop()
-            showEmpty = false
-        }
-    }
-
+    title: "Flow"
     visible: false
     color: "transparent"
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
-    title: "Flow"
 
-    // Stands in for the exclusive keyboard focus the Wayland layer gave the original:
-    // once the picker loses focus it closes instead of lingering over the desktop.
-    property bool wasActive: false
+    // Everything is drawn for a 1080p screen and scaled from there.
+    readonly property real unit: Screen.height / 1080
+    readonly property real reference: 1920
+
+    readonly property int across: Math.max(3, backend.tiles)
+    // One card's share of the row, less a hair of air between them.
+    readonly property real slot: (reference / across - 10) * unit
+    readonly property real cardHeight: 500 * unit
+    readonly property real midX: width / 2
+    readonly property real midY: height / 2
+
+    // How far out from the middle a card is still worth drawing.
+    readonly property int reach: 5
+
+    // The shape of the row, read off at whole steps from the middle: how far out the
+    // card sits, in slots, and how big it is. Between the steps the two are
+    // interpolated, which is what makes the row slide smoothly rather than jump.
+    readonly property var stops: [0.000, 1.100, 2.030, 2.970, 3.865, 4.650]
+    readonly property var sizes: [1.080, 0.720, 0.600, 0.480, 0.370, 0.300]
+    // Carries the table on past its last entry, for cards on their way off screen.
+    readonly property real tailStep: 0.785
+
+    function sample(table, distance, beyond) {
+        const last = table.length - 1
+        if (distance >= last)
+            return table[last] + (distance - last) * beyond
+        const step = Math.floor(distance)
+        return table[step] + (table[step + 1] - table[step]) * (distance - step)
+    }
+
+    function placeAt(distance) { return sample(stops, distance, tailStep) }
+    function sizeAt(distance) { return sample(sizes, distance, 0) }
+
+    // The picker is a transient overlay: once it is no longer the active window it
+    // has been dismissed, so it closes rather than hang over the desktop.
+    property bool everActive: false
     onActiveChanged: {
         if (active) {
-            wasActive = true
-        } else if (wasActive) {
-            // Closing mid-transition must still set the wallpaper that was picked.
-            commitPending()
+            everActive = true
+        } else if (everActive) {
+            setChosen()       // a dismissal mid-animation still honours the pick
             Qt.quit()
         }
     }
 
-    // The picked tile grows to fill the screen, the wallpaper is set behind it, then it fades away.
-    property bool leaving: false
-    property string pendingPath: ""
+    // ---------------------------------------------------------------- choosing
 
-    function commitPending() {
-        if (pendingPath === "") return
-        const path = pendingPath
-        pendingPath = ""
+    // The picked card's own picture grows to fill the screen: it slides to the
+    // middle and scales up while the frame around it opens out, so nothing is ever
+    // re-cropped on the way. Then the wallpaper is set behind it and it fades into
+    // the desktop, which by then is showing the same picture.
+    property string chosen: ""
+    property bool zooming: false
+    property real grown: 0                  // 0: the card, 1: the whole screen
+    property rect from: Qt.rect(0, 0, 0, 0)
+    property real startScale: 1
+
+    function setChosen() {
+        if (chosen === "") return
+        const path = chosen
+        chosen = ""
         backend.apply(path)
     }
 
-    function beginReveal(tile, thumbUrl, fileUrl, filePath) {
-        leaving = true
-        pendingPath = filePath
-        const from = tile.mapToItem(null, 0, 0)
-        reveal.x = from.x
-        reveal.y = from.y
-        reveal.width = tile.width
-        reveal.height = tile.height
-        revealThumb.source = thumbUrl
-        revealFull.source = fileUrl
-        reveal.visible = true
-        grow.start()
-    }
-
-    function settleReveal() {
-        if (outro.running || !leaving || grow.running) return
-        if (revealFull.status === Image.Loading) return
-        fullTimeout.stop()
-        outro.start()
-    }
-
-    Item {
-        id: reveal
-        z: 5
-        visible: false
-        clip: true
-
-        Image {
-            id: revealThumb
-            anchors.fill: parent
-            fillMode: Image.PreserveAspectCrop
-            cache: false
-            smooth: true
+    function pick(card, thumb, full, path) {
+        if (zooming || !card) return
+        if (!backend.transition) {
+            backend.apply(path)
+            Qt.quit()
+            return
         }
+        zooming = true
+        chosen = path
 
-        // The thumbnail carries the motion; the full image sharpens it once decoded.
-        Image {
-            id: revealFull
-            anchors.fill: parent
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
-            cache: false
-            smooth: true
-            opacity: status === Image.Ready ? 1 : 0
-            Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.InOutQuad } }
-            onStatusChanged: main.settleReveal()
-        }
+        // Corner to corner, so the card's own scale is folded into the rectangle.
+        const topLeft = card.mapToItem(null, 0, 0)
+        const bottomRight = card.mapToItem(null, card.width, card.height)
+        from = Qt.rect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y)
+
+        // How much smaller the picture is on the card than it will be on the screen.
+        // The card fills a tall frame and the screen a wide one, so each is the
+        // larger of its two fits; their ratio is where the zoom starts.
+        zoomThumb.source = thumb
+        const w = zoomThumb.implicitWidth
+        const h = zoomThumb.implicitHeight
+        if (w > 0 && h > 0)
+            startScale = Math.max(from.width / w, from.height / h) / Math.max(width / w, height / h)
+        else
+            startScale = from.height / height
+
+        grown = 0
+        zoom.opacity = 1
+        zoomFull.source = full
+        zoom.visible = true
+        openUp.start()
     }
 
-    Timer {
-        id: fullTimeout
-        interval: 2500
-        onTriggered: if (!outro.running) outro.start()
+    function finishZoom() {
+        if (!zooming || bowOut.running || openUp.running) return
+        if (zoomFull.status === Image.Loading) return   // let the full image land first
+        patience.stop()
+        bowOut.start()
     }
 
-    ParallelAnimation {
-        id: grow
-        NumberAnimation { target: reveal; property: "x"; to: 0; duration: 520; easing.type: Easing.InOutCubic }
-        NumberAnimation { target: reveal; property: "y"; to: 0; duration: 520; easing.type: Easing.InOutCubic }
-        NumberAnimation { target: reveal; property: "width"; to: main.width; duration: 520; easing.type: Easing.InOutCubic }
-        NumberAnimation { target: reveal; property: "height"; to: main.height; duration: 520; easing.type: Easing.InOutCubic }
-        NumberAnimation { target: list; property: "opacity"; to: 0; duration: 280; easing.type: Easing.OutQuad }
-        NumberAnimation { target: hints; property: "opacity"; to: 0; duration: 200 }
-        onFinished: { fullTimeout.start(); main.settleReveal() }
-    }
-
-    SequentialAnimation {
-        id: outro
-        PauseAnimation { duration: 240 }
-        ScriptAction { script: main.commitPending() }
-        PauseAnimation { duration: 260 }
-        NumberAnimation { target: reveal; property: "opacity"; to: 0; duration: 420; easing.type: Easing.InOutQuad }
-        ScriptAction { script: Qt.quit() }
-    }
+    // ---------------------------------------------------------------- the files
 
     FolderListModel {
-        id: folderModel
-        folder: backend.wallpaperUrl
+        id: files
+        folder: backend.folderUrl
         showDirs: false
-        // No webp: Windows cannot set one as the desktop wallpaper.
+        // No webp: Windows will not take one as a desktop wallpaper.
         nameFilters: ["*.png", "*.jpg", "*.jpeg"]
         sortField: FolderListModel.Name
     }
 
-    // Almost invisible, but it keeps the empty area clickable on Windows.
+    readonly property bool noFiles: files.status === FolderListModel.Ready && files.count === 0
+
+    // ---------------------------------------------------------------- backdrop
+
     Rectangle {
         anchors.fill: parent
+        // All but invisible, and enough for Windows to treat the window as solid
+        // so clicks land here instead of falling through to the desktop.
         color: "#03000000"
+
+        TapHandler {
+            enabled: !root.zooming
+            onTapped: Qt.quit()
+        }
     }
 
-    MouseArea {
-        id: outsideClickArea
+    // ---------------------------------------------------------------- carousel
+
+    Item {
+        id: strip
+
         anchors.fill: parent
-        z: 0
-        enabled: !main.leaving
-        onClicked: Qt.quit()
-    }
-
-    Timer {
-        id: emptyDelay
-        interval: 300
-        onTriggered: main.showEmpty = main.looksEmpty
-    }
-
-    Column {
-        id: emptyState
-        anchors.centerIn: parent
-        spacing: 10 * main.ui
-        z: 2
-        visible: main.showEmpty
-
-        Text {
-            text: "No wallpapers found"
-            color: "#ffffff"
-            font.pixelSize: 22 * main.ui
-            font.bold: true
-            anchors.horizontalCenter: parent.horizontalCenter
-        }
-
-        Text {
-            text: "Add images to:"
-            color: "#aaaaaa"
-            font.pixelSize: 13 * main.ui
-            anchors.horizontalCenter: parent.horizontalCenter
-        }
-
-        TextEdit {
-            id: pathText
-            text: backend.wallpaperPath
-            color: "#dddddd"
-            font.pixelSize: 14 * main.ui
-            readOnly: true
-            selectByMouse: true
-            anchors.horizontalCenter: parent.horizontalCenter
-            horizontalAlignment: Text.AlignHCenter
-        }
-
-        Text {
-            text: "Open folder"
-            color: "#ffffff"
-            font.pixelSize: 14 * main.ui
-            font.underline: true
-            topPadding: 8 * main.ui
-            anchors.horizontalCenter: parent.horizontalCenter
-
-            MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: { backend.openFolder(); Qt.quit() }
-            }
-        }
-    }
-
-    Text {
-        id: hints
-        visible: backend.showHints
-        z: 2
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.top: list.bottom
-        anchors.topMargin: 28 * main.ui
-        text: "Click or Space to apply   ·   ← → to browse   ·   O to open wallpapers folder   ·   Esc to close"
-        color: "#ffffff"
-        opacity: 0.75
-        style: Text.Outline
-        styleColor: "#99000000"
-        font.pixelSize: 13 * main.ui
-    }
-
-    ListView {
-        id: list
-        width: parent.width
-        height: tileHeight
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.verticalCenter: parent.verticalCenter
-        z: 1
         focus: true
-        model: folderModel
-        orientation: ListView.Horizontal
-        spacing: 0
-        clip: true
-        cacheBuffer: 400 * main.ui
-        boundsBehavior: Flickable.StopAtBounds
+        opacity: root.zooming ? 0 : 1
+        enabled: !root.zooming
+        Behavior on opacity { NumberAnimation { duration: 260; easing.type: Easing.OutQuad } }
 
-        property int selectedIndex: main.startPosition
+        // Which card is in the middle. `current` is the selection; `cursor` is where
+        // the row has actually slid to, and catches up to it.
+        property int current: 0
+        property real cursor: 0
+        property bool placed: false
 
-        readonly property real tileHeight: main.refHeight * main.ui
-        readonly property real tileWidth: (main.refWidth / Math.max(1, backend.numberOfPictures) - 10) * main.ui
+        onCurrentChanged: cursor = current
 
-        readonly property real viewportCenterX: width / 2
-        readonly property real falloffRadius: (main.refWidth / 2) * main.ui
-
-        readonly property real step: tileWidth + main.baseSpacing * main.ui
-        readonly property real sideMargin: Math.max(0, viewportCenterX - tileWidth / 2)
-        property bool ready: false
-        property bool userMoved: false
-
-        leftMargin: sideMargin
-        rightMargin: sideMargin
-
-        function clampIndex(i) { return Math.max(0, Math.min(i, count - 1)) }
-        function ensureVisibleAnimated(i) { contentX = i * step }
-
-        function centerOnStart() {
-            if (userMoved || count <= 0 || backend.numberOfPictures <= 0) return
-            // A short row opens on its middle tile instead of leaning to one side.
-            selectedIndex = clampIndex(Math.min(main.startPosition, Math.floor((count - 1) / 2)))
-            contentX = selectedIndex * step
-            ready = true
+        Behavior on cursor {
+            enabled: strip.placed
+            NumberAnimation { duration: 150; easing.type: Easing.OutQuad }
         }
 
-        function activateCurrent() {
-            if (count <= 0 || main.leaving) return
-            const filePath = folderModel.get(selectedIndex, "filePath")
-            const item = itemAtIndex(selectedIndex)
-            if (!backend.transition || !item) {
-                backend.apply(filePath)
-                Qt.quit()
-                return
+        // The row opens a little left of middle, and on the middle card when there
+        // are too few to fill it. No animation for that first placement.
+        Connections {
+            target: files
+            function onCountChanged() {
+                if (strip.placed || files.count <= 0) return
+                strip.current = Math.min(4, Math.floor((files.count - 1) / 2))
+                strip.cursor = strip.current
+                strip.placed = true
             }
-            enabled = false
-            main.beginReveal(item.tile, item.thumbUrl, folderModel.get(selectedIndex, "fileUrl"), filePath)
         }
 
-        function moveSelection(delta, speedMultiplier) {
-            if (count <= 0) return
-            userMoved = true
-            anim.velocity = main.speed * speedMultiplier
-            selectedIndex = clampIndex(selectedIndex + delta)
-            ensureVisibleAnimated(selectedIndex)
+        // The ends are ends: asking for a card that is not there does nothing, so the
+        // row can never run off into empty space.
+        function step(delta) {
+            const next = current + delta
+            if (files.count <= 0 || next < 0 || next >= files.count) return
+            current = next
         }
 
-        onCountChanged: centerOnStart()
-        onWidthChanged: centerOnStart()
-        onTileWidthChanged: centerOnStart()
-
-        Behavior on contentX {
-            enabled: list.ready
-            SmoothedAnimation { id: anim; property real velocity: main.speed; duration: main.animDuration }
+        function choose() {
+            const card = cards.itemAt(current)
+            if (files.count <= 0 || !card) return
+            root.pick(card.frame, card.thumbUrl, card.fileUrl, card.filePath)
         }
 
-        delegate: Item {
-            id: delegateItem
-            width: list.tileWidth
-            height: list.tileHeight
-
-            property bool active: index === list.selectedIndex
-            property alias tile: content
-            readonly property string thumbUrl: backend.cacheUrl + encodeURIComponent(fileName)
-            readonly property real baseWidth: list.tileWidth
-            readonly property real baseCenterX: x - list.contentX + baseWidth / 2
-            readonly property real distance: Math.abs(baseCenterX - list.viewportCenterX)
-            readonly property real fraction: Math.min(1, distance / list.falloffRadius)
-            readonly property real compression: { const t = fraction; return t * t * t * t }
-            readonly property real edgeOffset: {
-                const amount = main.edgeSpacing * main.ui * compression
-                return baseCenterX < list.viewportCenterX ? amount : -amount
-            }
-            readonly property real scaleFactor: {
-                const t = 1 - fraction * fraction * (3 - 2 * fraction)
-                return main.edgeScale + (main.zoomScale - main.edgeScale) * t
-            }
-
-            Item {
-                id: content
-                anchors.verticalCenter: parent.verticalCenter
-                width: delegateItem.baseWidth * delegateItem.scaleFactor
-                height: delegateItem.height * Math.min(1, delegateItem.scaleFactor)
-                x: (delegateItem.baseWidth - width) / 2 + delegateItem.edgeOffset
-
-                Image {
-                    id: shadowImage
-                    x: main.shadowX * main.ui
-                    y: main.shadowY * main.ui
-                    width: parent.width
-                    height: parent.height
-                    source: img.source
-                    sourceSize.width: img.sourceSize.width
-                    sourceSize.height: img.sourceSize.height
-                    fillMode: Image.PreserveAspectCrop
-                    asynchronous: true
-                    cache: false
-                    smooth: true
-                    visible: main.shadowEnabled
-                    opacity: main.shadowOpacity
-                    layer.enabled: true
-                    layer.effect: MultiEffect { brightness: -1; blurEnabled: true; blur: main.shadowBlur }
-                    transform: Matrix4x4 { matrix: Qt.matrix4x4(1, main.skewFactor, 0, 0,
-                                                                   0, 1, 0, 0,
-                                                                   0, 0, 1, 0,
-                                                                   0, 0, 0, 1) }
-                }
-
-                Text {
-                    id: alt
-                    text: ""
-                    color: backend.borderColor
-                    anchors.centerIn: parent
-                    font.pixelSize: 16 * main.ui
-                    transform: Matrix4x4 { matrix: Qt.matrix4x4(1, main.skewFactor, 0, 0,
-                                                                   0, 1, 0, 0,
-                                                                   0, 0, 1, 0,
-                                                                   0, 0, 0, 1) }
-                }
-
-                Image {
-                    id: img
-                    anchors.fill: parent
-                    opacity: 0.95
-                    fillMode: Image.PreserveAspectCrop
-                    asynchronous: true
-                    cache: false
-                    smooth: true
-                    source: delegateItem.thumbUrl
-                    sourceSize.width: delegateItem.baseWidth * main.zoomScale
-                    sourceSize.height: delegateItem.height
-                    transform: Matrix4x4 { matrix: Qt.matrix4x4(1, main.skewFactor, 0, 0,
-                                                                   0, 1, 0, 0,
-                                                                   0, 0, 1, 0,
-                                                                   0, 0, 0, 1) }
-
-                    Timer {
-                        id: retryTimer
-                        interval: 1000
-                        repeat: false
-                        onTriggered: { const s = img.source; img.source = ""; img.source = s }
-                    }
-
-                    onStatusChanged: {
-                        if (status === Image.Error) { alt.text = "Caching"; retryTimer.start() }
-                    }
-                }
-
-                Rectangle {
-                    z: 10
-                    anchors.fill: parent
-                    visible: delegateItem.active
-                    color: "transparent"
-                    border.width: Math.max(1, Math.round(2 * main.ui))
-                    border.color: backend.borderColor
-                    transform: Matrix4x4 { matrix: Qt.matrix4x4(1, main.skewFactor, 0, 0,
-                                                                   0, 1, 0, 0,
-                                                                   0, 0, 1, 0,
-                                                                   0, 0, 0, 1) }
+        // The card under a point, picking the one drawn on top where two overlap.
+        function cardAt(x, y) {
+            let found = -1
+            let depth = -Infinity
+            const low = Math.max(0, current - root.reach - 1)
+            const high = Math.min(files.count - 1, current + root.reach + 1)
+            for (let i = low; i <= high; i++) {
+                const card = cards.itemAt(i)
+                if (!card || !card.visible) continue
+                const p = card.mapFromItem(strip, x, y)
+                if (card.contains(p) && card.z > depth) {
+                    found = i
+                    depth = card.z
                 }
             }
+            return found
+        }
 
-            MouseArea {
-                anchors.fill: parent
-                hoverEnabled: list.ready
-                onEntered: { list.userMoved = true; list.selectedIndex = index }
-                onClicked: list.activateCurrent()
-                onWheel: function(wheel) { list.flick(-wheel.angleDelta.y * 8, 0); wheel.accepted = true }
+        // Hover picks a card only when the mouse itself moves. The row slides under a
+        // pointer that is standing still whenever the arrow keys are used, and if
+        // that counted as hovering, the mouse would drag the selection back.
+        property real seenX: NaN
+        property real seenY: NaN
+
+        HoverHandler {
+            enabled: strip.placed && !root.zooming
+            onPointChanged: {
+                const p = point.position
+                const known = !isNaN(strip.seenX)
+                const moved = known && (p.x !== strip.seenX || p.y !== strip.seenY)
+                strip.seenX = p.x
+                strip.seenY = p.y
+                if (!moved) return
+                const i = strip.cardAt(p.x, p.y)
+                if (i >= 0) strip.current = i
             }
         }
 
-        Keys.onPressed: function(event) {
-            if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                activateCurrent()
-            } else if (event.key === Qt.Key_Left) {
-                moveSelection(-1, 1)
-            } else if (event.key === Qt.Key_Right) {
-                moveSelection(1, 1)
-            } else if (event.key === Qt.Key_O) {
+        WheelHandler {
+            onWheel: function (event) {
+                if (event.angleDelta.y > 0)
+                    strip.step(-1)
+                else if (event.angleDelta.y < 0)
+                    strip.step(1)
+            }
+        }
+
+        Keys.onLeftPressed: strip.step(-1)
+        Keys.onRightPressed: strip.step(1)
+        Keys.onSpacePressed: strip.choose()
+        Keys.onReturnPressed: strip.choose()
+        Keys.onEnterPressed: strip.choose()
+        Keys.onEscapePressed: Qt.quit()
+        Keys.onPressed: function (event) {
+            if (event.key === Qt.Key_O) {
                 backend.openFolder()
                 Qt.quit()
-            } else if (event.key === Qt.Key_W || event.key === Qt.Key_Escape) {
+            } else if (event.key === Qt.Key_W) {
                 Qt.quit()
+            } else if (event.key === Qt.Key_Home) {
+                strip.current = 0
+            } else if (event.key === Qt.Key_End) {
+                strip.current = files.count - 1
             } else {
                 return
             }
             event.accepted = true
         }
+
+        Repeater {
+            id: cards
+            model: files
+
+            delegate: Item {
+                id: card
+
+                required property int index
+                required property string fileName
+                required property string filePath
+                required property url fileUrl
+
+                readonly property url thumbUrl: backend.thumbsUrl + encodeURIComponent(fileName)
+                readonly property Item frame: body
+                readonly property bool current: index === strip.current
+
+                // Signed distance from the middle of the row.
+                readonly property real gap: index - strip.cursor
+                readonly property real away: Math.abs(gap)
+                // Far enough out to be off screen, but still worth keeping decoded
+                // so it is already there when it slides back in.
+                readonly property bool near: away < root.reach + 2
+
+                width: root.slot
+                height: root.cardHeight
+                x: root.midX + Math.sign(gap) * root.placeAt(away) * root.slot - width / 2
+                y: root.midY - height / 2
+                scale: root.sizeAt(away)
+                visible: away < root.reach + 1
+                // The middle card sits above its neighbours, so the one that is
+                // selected is the one on top.
+                z: Math.round(100 - away * 10)
+
+                // A blurred slab behind the photo. The inset leaves the layer room
+                // for the blur to spread into instead of being cut off at its edge.
+                Item {
+                    x: 6 * root.unit
+                    y: 6 * root.unit
+                    width: parent.width
+                    height: parent.height
+                    layer.enabled: true
+                    layer.effect: MultiEffect {
+                        blurEnabled: true
+                        blur: 0.45
+                        blurMax: 24
+                    }
+
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.margins: 8 * root.unit
+                        color: "#000000"
+                        opacity: 0.4
+                    }
+                }
+
+                Item {
+                    id: body
+                    anchors.fill: parent
+                    clip: true
+
+                    // Stands in until the thumbnail has been written, and shows
+                    // through anywhere the photo does not reach.
+                    Rectangle {
+                        anchors.fill: parent
+                        color: "#1b1b1f"
+                        visible: photo.status !== Image.Ready
+
+                        Text {
+                            anchors.centerIn: parent
+                            width: parent.width - 16
+                            text: card.fileName
+                            color: "#6f6f78"
+                            font.pixelSize: 11 * root.unit
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.Wrap
+                            elide: Text.ElideRight
+                            maximumLineCount: 3
+                        }
+                    }
+
+                    Image {
+                        id: photo
+                        anchors.fill: parent
+                        source: card.near ? card.thumbUrl : ""
+                        fillMode: Image.PreserveAspectCrop
+                        sourceSize.height: root.cardHeight
+                        asynchronous: true
+                        // Kept in Qt's image cache, so a card sliding back into view
+                        // does not decode its thumbnail all over again.
+                        cache: true
+                        smooth: true
+                        opacity: status === Image.Ready ? 0.95 : 0
+                        Behavior on opacity { NumberAnimation { duration: 160 } }
+                    }
+
+                    Rectangle {
+                        anchors.fill: parent
+                        visible: card.current && backend.highlight !== "transparent"
+                        color: "transparent"
+                        border.width: Math.max(1, Math.round(2 * root.unit))
+                        border.color: backend.highlight
+                    }
+                }
+
+                // The first run has no thumbnails yet; each one says when it is
+                // ready rather than every card sitting on a retry timer.
+                Connections {
+                    target: backend
+                    function onThumbnailReady(name) {
+                        if (name !== card.fileName || photo.status === Image.Ready) return
+                        photo.source = ""
+                        photo.source = card.near ? card.thumbUrl : ""
+                    }
+                }
+
+                TapHandler {
+                    enabled: !root.zooming
+                    onTapped: root.pick(body, card.thumbUrl, card.fileUrl, card.filePath)
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- captions
+
+    Text {
+        visible: backend.showHints && !root.noFiles
+        opacity: root.zooming ? 0 : 0.75
+        z: 2
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: root.midY + root.cardHeight / 2 + 40 * root.unit
+        text: "Click or Space to apply   ·   ← → to browse   ·   O to open wallpapers folder   ·   Esc to close"
+        color: "#ffffff"
+        style: Text.Outline
+        styleColor: "#99000000"
+        font.pixelSize: 13 * root.unit
+        Behavior on opacity { NumberAnimation { duration: 200 } }
+    }
+
+    // A folder being read briefly looks empty; wait before saying so.
+    property bool sayEmpty: false
+    onNoFilesChanged: {
+        if (noFiles) {
+            emptyPause.restart()
+        } else {
+            emptyPause.stop()
+            sayEmpty = false
+        }
+    }
+
+    Timer {
+        id: emptyPause
+        interval: 300
+        onTriggered: root.sayEmpty = root.noFiles
+    }
+
+    Column {
+        z: 2
+        visible: root.sayEmpty
+        anchors.centerIn: parent
+        spacing: 10 * root.unit
+
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: "No wallpapers found"
+            color: "#ffffff"
+            font.pixelSize: 22 * root.unit
+            font.bold: true
+        }
+
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: "Add images to:"
+            color: "#aaaaaa"
+            font.pixelSize: 13 * root.unit
+        }
+
+        TextEdit {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: backend.folderPath
+            color: "#dddddd"
+            font.pixelSize: 14 * root.unit
+            readOnly: true
+            selectByMouse: true
+            horizontalAlignment: Text.AlignHCenter
+        }
+
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: "Open folder"
+            color: "#ffffff"
+            font.pixelSize: 14 * root.unit
+            font.underline: true
+            topPadding: 8 * root.unit
+
+            HoverHandler { cursorShape: Qt.PointingHandCursor }
+            TapHandler { onTapped: { backend.openFolder(); Qt.quit() } }
+        }
+    }
+
+    // ---------------------------------------------------------------- the zoom
+
+    // The frame: opens out from the card's rectangle to the whole screen.
+    Item {
+        id: zoom
+        z: 5
+        visible: false
+        clip: true
+        x: root.from.x * (1 - root.grown)
+        y: root.from.y * (1 - root.grown)
+        width: root.from.width + (root.width - root.from.width) * root.grown
+        height: root.from.height + (root.height - root.from.height) * root.grown
+
+        // The picture: always laid out at full-screen size and cropped as the
+        // desktop will crop it, then moved and scaled. Its middle travels from the
+        // card's middle to the screen's.
+        Item {
+            readonly property real fromX: root.from.x + root.from.width / 2
+            readonly property real fromY: root.from.y + root.from.height / 2
+
+            width: root.width
+            height: root.height
+            x: fromX + (root.midX - fromX) * root.grown - root.midX - zoom.x
+            y: fromY + (root.midY - fromY) * root.grown - root.midY - zoom.y
+            scale: root.startScale + (1 - root.startScale) * root.grown
+
+            Image {
+                id: zoomThumb
+                anchors.fill: parent
+                fillMode: Image.PreserveAspectCrop
+                // Loaded on the spot: its size sets where the zoom starts.
+                asynchronous: false
+                cache: true
+                smooth: true
+            }
+
+            // The thumbnail carries the movement; the real file sharpens it on arrival.
+            Image {
+                id: zoomFull
+                anchors.fill: parent
+                fillMode: Image.PreserveAspectCrop
+                sourceSize.width: root.width
+                sourceSize.height: root.height
+                asynchronous: true
+                cache: false
+                smooth: true
+                opacity: status === Image.Ready ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.InOutQuad } }
+                onStatusChanged: root.finishZoom()
+            }
+        }
+    }
+
+    // A very large photo must not hold the animation up for ever.
+    Timer {
+        id: patience
+        interval: 2500
+        onTriggered: if (!bowOut.running) bowOut.start()
+    }
+
+    NumberAnimation {
+        id: openUp
+        target: root
+        property: "grown"
+        from: 0
+        to: 1
+        duration: 480
+        easing.type: Easing.InOutCubic
+        onFinished: { patience.start(); root.finishZoom() }
+    }
+
+    SequentialAnimation {
+        id: bowOut
+        PauseAnimation { duration: 180 }            // the full image finishes sharpening
+        ScriptAction { script: root.setChosen() }
+        PauseAnimation { duration: 160 }            // the desktop repaints behind us
+        NumberAnimation { target: zoom; property: "opacity"; to: 0; duration: 380; easing.type: Easing.OutQuad }
+        ScriptAction { script: Qt.quit() }
     }
 }

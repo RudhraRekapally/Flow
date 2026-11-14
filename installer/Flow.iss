@@ -2,7 +2,7 @@
 ; Installs for the current user only, so nobody is asked for an administrator password.
 
 #define AppName "Flow"
-#define AppVersion "1.1.2"
+#define AppVersion "1.2.0"
 #define AppExe "Flow.exe"
 
 [Setup]
@@ -53,6 +53,8 @@ Type: files; Name: "{autoprograms}\Wallpaper Selector.lnk"
 Type: files; Name: "{autoprograms}\Wallpaper Selector - open wallpapers folder.lnk"
 Type: files; Name: "{autodesktop}\Wallpaper Selector.lnk"
 Type: files; Name: "{app}\WallpaperSelector.exe"
+; No longer shipped, so remove the copy an earlier install left behind.
+Type: files; Name: "{app}\licenses\43PR-dotfiles-MIT.txt"
 
 [UninstallDelete]
 ; Thumbnail cache and settings. The user's own pictures are never touched.
