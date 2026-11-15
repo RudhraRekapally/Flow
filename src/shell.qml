@@ -136,8 +136,9 @@ Window {
         id: files
         folder: backend.folderUrl
         showDirs: false
-        // No webp: Windows will not take one as a desktop wallpaper.
-        nameFilters: ["*.png", "*.jpg", "*.jpeg"]
+        // The file types this system can set as a wallpaper, in any case: IMG_0042.JPG counts.
+        nameFilters: backend.patterns
+        caseSensitive: false
         sortField: FolderListModel.Name
     }
 

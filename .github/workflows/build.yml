@@ -95,6 +95,27 @@ jobs:
             wait "$pid"; echo "Flow exited early with code $?"; exit 1
           fi
 
+      - name: Shortcut helper (Control-Option-W)
+        run: |
+          app="$PWD/dist/Flow.app/Contents/MacOS/Flow"
+          log=~/Library/Logs/Flow-shortcut.log
+          "$app" --setup-shortcut || echo "setup returned $?"
+          sleep 6
+          launchctl print "gui/$(id -u)/app.flow.wallpapers.shortcut" | grep -E "^\s*(state|pid|last exit code)" || true
+          cat "$log" || true
+          grep -q "listening for Control-Option-W" "$log"
+          # Press the keys if this runner lets scripts type; informational only.
+          before=$(pgrep -f "Flow.app/Contents/MacOS/Flow$" | wc -l | tr -d ' ')
+          osascript -e 'tell application "System Events" to keystroke "w" using {control down, option down}' \
+            || echo "this runner cannot send keystrokes"
+          sleep 8
+          after=$(pgrep -f "Flow.app/Contents/MacOS/Flow$" | wc -l | tr -d ' ')
+          echo "pickers open before the keys: $before, after: $after"
+          grep "shortcut pressed" "$log" || echo "no key press reached the helper"
+          "$app" --remove-shortcut
+          pkill -f "Flow.app/Contents/MacOS/Flow" || true
+          test ! -e ~/Library/LaunchAgents/app.flow.wallpapers.shortcut.plist
+
       - name: Package .dmg
         run: |
           mkdir dmg

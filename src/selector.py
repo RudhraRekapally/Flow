@@ -22,7 +22,7 @@ from PySide6.QtGui import QCursor, QGuiApplication, QImageReader
 from PySide6.QtQml import QQmlApplicationEngine
 
 APP_NAME = "Flow"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 # The name before Flow. Settings saved under it are carried over on first run.
 LEGACY_NAME = "WallpaperSelector"
 
@@ -33,6 +33,10 @@ MACOS = sys.platform == "darwin"
 RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 
 EXTENSIONS = {".png", ".jpg", ".jpeg"}
+if MACOS:
+    # Photos from an iPhone arrive as HEIC, and macOS sets either of these as a wallpaper.
+    # Windows takes neither.
+    EXTENSIONS |= {".heic", ".heif", ".webp"}
 THUMB_HEIGHT = 500
 
 DEFAULTS = {
@@ -43,6 +47,8 @@ DEFAULTS = {
     "workers": 20,
     "show_hints": True,
     "transition": True,
+    # macOS only: keep the Control-Option-W helper running. Windows uses its Start menu entry.
+    "shortcut": True,
 }
 
 # Settings written by Flow 1.1 and earlier, which used other names for these.
@@ -150,18 +156,31 @@ def make_thumbnail(src, out, announce=None):
         width = max(1, round(size.width() * THUMB_HEIGHT / size.height()))
         reader.setScaledSize(QSize(width, THUMB_HEIGHT))
     image = reader.read()
-    if image.isNull():
-        return
     # Write beside the target and rename, so the picker never loads a half-written file.
     part = out.with_name(out.name + ".part")
-    fmt = "PNG" if out.suffix.lower() == ".png" else "JPG"
-    if image.save(str(part), fmt, 85):
-        # The thumbnail carries its source's timestamp; a mismatch later means the image was replaced.
-        os.utime(part, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
-        os.replace(part, out)
-        if announce is not None:
-            # Crosses back to the GUI thread as a queued signal.
-            announce(out.name)
+    if image.isNull():
+        # Qt may have no reader for HEIC; macOS can convert it itself.
+        if not (MACOS and sips_thumbnail(src, part)):
+            return
+    else:
+        fmt = "PNG" if out.suffix.lower() == ".png" else "JPG"
+        if not image.save(str(part), fmt, 85):
+            return
+    # The thumbnail carries its source's timestamp; a mismatch later means the image was replaced.
+    os.utime(part, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    os.replace(part, out)
+    if announce is not None:
+        # Crosses back to the GUI thread as a queued signal.
+        announce(out.name)
+
+
+def sips_thumbnail(src, part):
+    """Have macOS write a JPEG thumbnail. It keeps the source's name; Qt reads it by content."""
+    done = run(
+        "sips", "-s", "format", "jpeg", "-s", "formatOptions", "85",
+        "--resampleHeight", str(THUMB_HEIGHT), str(src), "--out", str(part),
+    )
+    return done is not None and done.returncode == 0 and part.is_file()
 
 
 def is_stale(src, thumb):
@@ -286,6 +305,10 @@ class Backend(QObject):
     def thumbsUrl(self):
         return QUrl.fromLocalFile(str(self.cache_dir) + os.sep).toString()
 
+    @Property("QVariantList", constant=True)
+    def patterns(self):
+        return ["*" + ext for ext in sorted(EXTENSIONS)]
+
     @Property(int, constant=True)
     def tiles(self):
         return self._tiles
@@ -343,15 +366,43 @@ def build(app):
     return engine, backend, pool
 
 
+def keep_shortcut(config):
+    """On a Mac, start (or stop) the helper behind Control-Option-W."""
+    if not MACOS:
+        return
+    import macshortcut
+
+    if config.get("shortcut", True):
+        macshortcut.ensure()
+    else:
+        macshortcut.remove()
+
+
 def main():
-    if "--open-folder" in sys.argv[1:]:
+    args = sys.argv[1:]
+    if "--open-folder" in args:
         open_folder(wallpaper_dir(load_config()))
+        return 0
+    if MACOS and "--shortcut" in args:
+        import macshortcut
+
+        return macshortcut.serve()
+    if MACOS and "--setup-shortcut" in args:
+        import macshortcut
+
+        return 0 if macshortcut.ensure() else 1
+    if MACOS and "--remove-shortcut" in args:
+        import macshortcut
+
+        macshortcut.remove()
         return 0
 
     app = QGuiApplication(sys.argv)
     engine, backend, pool = build(app)
     code = app.exec()
     del engine
+    # After the picker closes, so it never waits on launchctl.
+    keep_shortcut(load_config())
     if pool:
         pool.shutdown(wait=True)
     return code

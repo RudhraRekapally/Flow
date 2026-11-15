@@ -4,7 +4,8 @@
 
 **Download:** get the installer from the [Releases page](../../releases/latest) (under **Assets**). The green **Code > Download ZIP** button gives the source code only.
 
-Put `.jpg`, `.jpeg` or `.png` files in **Pictures/Wallpapers** and open Flow.
+Put `.jpg`, `.jpeg` or `.png` files in **Pictures/Wallpapers** and open Flow. On a Mac,
+`.heic` (iPhone photos) and `.webp` work too.
 
 | Key | Action |
 | --- | --- |
@@ -40,8 +41,18 @@ Flow is not signed with an Apple developer certificate, so the first launch is b
 (Or, in Terminal: `xattr -dr com.apple.quarantine /Applications/Flow.app`.)
 
 The first time you pick a wallpaper, macOS asks whether Flow may control **System Events**.
-Allow it; that is how Flow sets the wallpaper. Launch Flow from Launchpad or Spotlight, or bind
-it to a key with the Shortcuts app.
+Allow it; that is how Flow sets the wallpaper.
+
+**Shortcut: Control+Option+W.** Open Flow once from Applications and close it; from then on
+Control+Option+W opens it from anywhere. A Mac app cannot carry a shortcut key the way a
+Windows Start menu entry can, so Flow leaves a small helper running for it (no Dock icon) that
+starts at login. macOS shows a "Background Items Added" notice for it; leave Flow switched on
+under **System Settings > General > Login Items**. If another app already uses
+Control+Option+W, the helper says so in `~/Library/Logs/Flow-shortcut.log`.
+
+To turn the shortcut off, set `"shortcut": false` in `config.json` (see Settings) and open Flow
+once. Before deleting Flow, run
+`/Applications/Flow.app/Contents/MacOS/Flow --remove-shortcut` to remove the helper too.
 
 ## Linux
 
@@ -71,10 +82,10 @@ Pushing a tag such as `v1.1.0` also publishes them on the repository's **Release
 | macOS | `~/Library/Application Support/Flow/` |
 | Linux | `~/.config/Flow/` |
 
-`wallpaper_path` is the folder to read (`$PICTURES` and `$HOME` are expanded),
-`number_of_pictures` is how many tiles fit across the screen, `show_hints` toggles the key
-hints under the carousel, and `transition` toggles the grow-and-fade animation when a
-wallpaper is picked.
+`folder` is the folder to read (`$PICTURES` and `$HOME` are expanded), `tiles` is how many
+tiles fit across the screen, `show_hints` toggles the key hints under the carousel,
+`transition` toggles the grow-and-fade animation when a wallpaper is picked, and `shortcut`
+(macOS only) keeps the Control+Option+W helper running.
 
 ## Building
 
