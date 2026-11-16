@@ -124,7 +124,12 @@ jobs:
           cp THIRD-PARTY-NOTICES.txt dmg/
           cp -R licenses dmg/licenses
           ln -s /Applications dmg/Applications
-          hdiutil create -volname Flow -srcfolder dmg -ov -format UDZO "Flow-macOS-${{ matrix.label }}.dmg"
+          # hdiutil on GitHub's Macs sometimes fails with "Resource busy"; a retry clears it.
+          for try in 1 2 3 4 5; do
+            hdiutil create -volname Flow -srcfolder dmg -ov -format UDZO "Flow-macOS-${{ matrix.label }}.dmg" && break
+            if [ "$try" = 5 ]; then exit 1; fi
+            echo "hdiutil failed (try $try), retrying"; sleep 10
+          done
 
       - uses: actions/upload-artifact@v4
         with:
