@@ -208,44 +208,8 @@ Window {
             root.pick(card.frame, card.thumbUrl, card.fileUrl, card.filePath)
         }
 
-        // The card under a point, picking the one drawn on top where two overlap.
-        function cardAt(x, y) {
-            let found = -1
-            let depth = -Infinity
-            const low = Math.max(0, current - root.reach - 1)
-            const high = Math.min(files.count - 1, current + root.reach + 1)
-            for (let i = low; i <= high; i++) {
-                const card = cards.itemAt(i)
-                if (!card || !card.visible) continue
-                const p = card.mapFromItem(strip, x, y)
-                if (card.contains(p) && card.z > depth) {
-                    found = i
-                    depth = card.z
-                }
-            }
-            return found
-        }
-
-        // Hover picks a card only when the mouse itself moves. The row slides under a
-        // pointer that is standing still whenever the arrow keys are used, and if
-        // that counted as hovering, the mouse would drag the selection back.
-        property real seenX: NaN
-        property real seenY: NaN
-
-        HoverHandler {
-            enabled: strip.placed && !root.zooming
-            onPointChanged: {
-                const p = point.position
-                const known = !isNaN(strip.seenX)
-                const moved = known && (p.x !== strip.seenX || p.y !== strip.seenY)
-                strip.seenX = p.x
-                strip.seenY = p.y
-                if (!moved) return
-                const i = strip.cardAt(p.x, p.y)
-                if (i >= 0) strip.current = i
-            }
-        }
-
+        // The row moves with the wheel and the arrow keys only; the mouse pointer
+        // passing over a card leaves the selection alone.
         WheelHandler {
             onWheel: function (event) {
                 if (event.angleDelta.y > 0)
@@ -362,12 +326,17 @@ Window {
                         anchors.fill: parent
                         source: card.near ? card.thumbUrl : ""
                         fillMode: Image.PreserveAspectCrop
-                        sourceSize.height: root.cardHeight
+                        // Decoded at the size the middle card is drawn, in real screen
+                        // pixels, so the card in focus is never an upscaled picture.
+                        sourceSize.height: Math.ceil(root.cardHeight * root.sizes[0] * Screen.devicePixelRatio)
                         asynchronous: true
                         // Kept in Qt's image cache, so a card sliding back into view
                         // does not decode its thumbnail all over again.
                         cache: true
                         smooth: true
+                        // The side cards are drawn well below that size; mipmaps keep
+                        // them clean instead of shimmering.
+                        mipmap: true
                         opacity: status === Image.Ready ? 0.95 : 0
                         Behavior on opacity { NumberAnimation { duration: 160 } }
                     }

@@ -18,11 +18,11 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PySide6.QtCore import Property, QObject, QSize, QStandardPaths, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QCursor, QGuiApplication, QImageReader
+from PySide6.QtGui import QCursor, QGuiApplication, QImageIOHandler, QImageReader
 from PySide6.QtQml import QQmlApplicationEngine
 
 APP_NAME = "Flow"
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 # The name before Flow. Settings saved under it are carried over on first run.
 LEGACY_NAME = "WallpaperSelector"
 
@@ -37,7 +37,9 @@ if MACOS:
     # Photos from an iPhone arrive as HEIC, and macOS sets either of these as a wallpaper.
     # Windows takes neither.
     EXTENSIONS |= {".heic", ".heif", ".webp"}
-THUMB_HEIGHT = 500
+# Tall enough that the middle card, drawn at half the screen's height, is never an
+# upscaled picture on a screen up to 4K.
+THUMB_HEIGHT = 1080
 
 DEFAULTS = {
     "folder": "$PICTURES/Wallpapers/",
@@ -185,9 +187,21 @@ def sips_thumbnail(src, part):
 
 def is_stale(src, thumb):
     try:
-        return thumb.stat().st_mtime_ns != src.stat().st_mtime_ns
+        if thumb.stat().st_mtime_ns != src.stat().st_mtime_ns:
+            return True
     except OSError:
         return True
+    # A thumbnail made by an older Flow at a smaller size is redone at the current one.
+    made = QImageReader(str(thumb)).size()
+    if not made.isValid() or made.height() >= THUMB_HEIGHT:
+        return False
+    reader = QImageReader(str(src))
+    full = reader.size()
+    if not full.isValid():
+        return False
+    # A photo stored on its side is turned upright when its thumbnail is made.
+    tall = full.width() if reader.transformation() & QImageIOHandler.Transformation.TransformationRotate90 else full.height()
+    return made.height() < min(tall, THUMB_HEIGHT) - 1
 
 
 def cache_thumbnails(source_dir, thumb_dir, batch_size, announce=None):
