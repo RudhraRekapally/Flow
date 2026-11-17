@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from PySide6.QtGui import QCursor, QGuiApplication, QImageIOHandler, QImageReade
 from PySide6.QtQml import QQmlApplicationEngine
 
 APP_NAME = "Flow"
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 # The name before Flow. Settings saved under it are carried over on first run.
 LEGACY_NAME = "WallpaperSelector"
 
@@ -297,6 +298,8 @@ def open_folder(folder):
 class Backend(QObject):
     # A thumbnail has just been written; the card showing that file can load it.
     thumbnailReady = Signal(str)
+    # The system has taken the new wallpaper.
+    applied = Signal()
 
     def __init__(self, config):
         super().__init__()
@@ -339,11 +342,25 @@ class Backend(QObject):
     def transition(self):
         return self._transition
 
+    @Property(int, constant=True)
+    def settleMs(self):
+        # How long the desktop takes to draw the new picture once the system has it.
+        return 650 if MACOS else 160
+
     @Slot(str)
     def apply(self, path):
-        image = Path(path).resolve()
+        # Off the GUI thread: on a Mac this waits on osascript, and the picture on
+        # screen must keep drawing meanwhile. Not a daemon, so a picker that closes
+        # early still waits for the wallpaper to be set before the process ends.
+        threading.Thread(target=self._apply, args=(Path(path).resolve(),)).start()
+
+    def _apply(self, image):
         if image.is_file():
             set_wallpaper(image)
+        try:
+            self.applied.emit()     # crosses back to the GUI thread as a queued signal
+        except RuntimeError:
+            pass                    # the picker has already gone
 
     @Slot()
     def openFolder(self):

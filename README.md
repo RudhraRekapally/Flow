@@ -9,8 +9,9 @@ Put `.jpg`, `.jpeg` or `.png` files in **Pictures/Wallpapers** and open Flow. On
 
 | Key | Action |
 | --- | --- |
-| Click, Space, Enter | Apply the highlighted wallpaper |
-| ← → or hover | Browse |
+| Double-click, Enter, Space | Apply the wallpaper (double-click works on any card) |
+| Click | Bring a card to the middle; click the middle card to apply it |
+| ← → or scroll | Browse (Home and End jump to the ends) |
 | O | Open the wallpapers folder |
 | Esc | Close |
 

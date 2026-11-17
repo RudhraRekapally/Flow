@@ -87,6 +87,7 @@ Window {
         if (chosen === "") return
         const path = chosen
         chosen = ""
+        sent = true
         backend.apply(path)
     }
 
@@ -123,11 +124,36 @@ Window {
         openUp.start()
     }
 
+    // The way out: set the wallpaper, wait until the system says it is done, give the
+    // desktop a moment to draw it, and only then fade the picture away. Fading any
+    // sooner shows the old wallpaper for an instant, which macOS is slow enough to do.
+    property bool sent: false       // the wallpaper has been asked for
+    property bool leaving: false
+    property bool fading: false
+
     function finishZoom() {
-        if (!zooming || bowOut.running || openUp.running) return
+        if (!zooming || openUp.running) return
         if (zoomFull.status === Image.Loading) return   // let the full image land first
+        leave()
+    }
+
+    function leave() {
+        if (leaving) return
+        leaving = true
         patience.stop()
         bowOut.start()
+    }
+
+    function fadeOut() {
+        if (!sent || fading) return
+        fading = true
+        landing.stop()
+        settle.start()
+    }
+
+    Connections {
+        target: backend
+        function onApplied() { root.fadeOut() }
     }
 
     // ---------------------------------------------------------------- the files
@@ -151,11 +177,6 @@ Window {
         // All but invisible, and enough for Windows to treat the window as solid
         // so clicks land here instead of falling through to the desktop.
         color: "#03000000"
-
-        TapHandler {
-            enabled: !root.zooming
-            onTapped: Qt.quit()
-        }
     }
 
     // ---------------------------------------------------------------- carousel
@@ -206,6 +227,60 @@ Window {
             const card = cards.itemAt(current)
             if (files.count <= 0 || !card) return
             root.pick(card.frame, card.thumbUrl, card.fileUrl, card.filePath)
+        }
+
+        // The card under a point, picking the one drawn on top where two overlap.
+        function cardAt(x, y) {
+            let found = -1
+            let depth = -Infinity
+            const low = Math.max(0, current - root.reach - 1)
+            const high = Math.min(files.count - 1, current + root.reach + 1)
+            for (let i = low; i <= high; i++) {
+                const card = cards.itemAt(i)
+                if (!card || !card.visible) continue
+                const p = card.mapFromItem(strip, x, y)
+                if (card.contains(p) && card.z > depth) {
+                    found = i
+                    depth = card.z
+                }
+            }
+            return found
+        }
+
+        // A click on a side card brings it to the middle; a click on the middle card
+        // applies it, and so does a double-click on any card. The row slides between
+        // the two clicks of a double-click, so the second one lands on whatever card
+        // moved under the pointer: it counts for the card the first click picked.
+        property int armed: -1
+        property real armedTime: 0
+        property point armedPoint: Qt.point(0, 0)
+
+        TapHandler {
+            enabled: !root.zooming
+            onTapped: function (eventPoint) {
+                const p = eventPoint.position
+                const quick = Date.now() - strip.armedTime <= Qt.styleHints.mouseDoubleClickInterval
+                const still = Math.abs(p.x - strip.armedPoint.x) < 12 * root.unit
+                    && Math.abs(p.y - strip.armedPoint.y) < 12 * root.unit
+                if (strip.armed >= 0 && quick && still) {
+                    strip.current = strip.armed
+                    strip.armed = -1
+                    strip.choose()
+                    return
+                }
+                strip.armed = -1
+                const i = strip.cardAt(p.x, p.y)
+                if (i < 0) {
+                    Qt.quit()                   // a click on the empty desktop closes
+                } else if (i === strip.current) {
+                    strip.choose()
+                } else {
+                    strip.current = i
+                    strip.armed = i
+                    strip.armedTime = Date.now()
+                    strip.armedPoint = p
+                }
+            }
         }
 
         // The row moves with the wheel and the arrow keys only; the mouse pointer
@@ -360,11 +435,6 @@ Window {
                         photo.source = card.near ? card.thumbUrl : ""
                     }
                 }
-
-                TapHandler {
-                    enabled: !root.zooming
-                    onTapped: root.pick(body, card.thumbUrl, card.fileUrl, card.filePath)
-                }
             }
         }
     }
@@ -377,7 +447,7 @@ Window {
         z: 2
         anchors.horizontalCenter: parent.horizontalCenter
         y: root.midY + root.cardHeight / 2 + 40 * root.unit
-        text: "Click or Space to apply   ·   ← → to browse   ·   O to open wallpapers folder   ·   Esc to close"
+        text: "Double-click or Enter to apply   ·   ← → to browse   ·   O to open wallpapers folder   ·   Esc to close"
         color: "#ffffff"
         style: Text.Outline
         styleColor: "#99000000"
@@ -503,7 +573,7 @@ Window {
     Timer {
         id: patience
         interval: 2500
-        onTriggered: if (!bowOut.running) bowOut.start()
+        onTriggered: root.leave()
     }
 
     NumberAnimation {
@@ -520,8 +590,21 @@ Window {
     SequentialAnimation {
         id: bowOut
         PauseAnimation { duration: 180 }            // the full image finishes sharpening
-        ScriptAction { script: root.setChosen() }
-        PauseAnimation { duration: 160 }            // the desktop repaints behind us
+        ScriptAction { script: { root.setChosen(); landing.start() } }
+    }
+
+    // The system never said the wallpaper was set; leave anyway.
+    Timer {
+        id: landing
+        interval: 4000
+        onTriggered: root.fadeOut()
+    }
+
+    SequentialAnimation {
+        id: settle
+        // The desktop draws the new picture behind us. macOS takes a while after it
+        // reports the change; Windows has drawn it by the time it returns.
+        PauseAnimation { duration: backend.settleMs }
         NumberAnimation { target: zoom; property: "opacity"; to: 0; duration: 380; easing.type: Easing.OutQuad }
         ScriptAction { script: Qt.quit() }
     }

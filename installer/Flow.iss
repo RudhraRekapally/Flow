@@ -2,7 +2,7 @@
 ; Installs for the current user only, so nobody is asked for an administrator password.
 
 #define AppName "Flow"
-#define AppVersion "1.3.1"
+#define AppVersion "1.3.2"
 #define AppExe "Flow.exe"
 
 [Setup]
